@@ -3,7 +3,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
-const { pool } = require('./db');
+const { pool } = require('./db'); // PostgreSQL pool
 const passport = require("passport");
 const {
   registerEmployee,
@@ -45,11 +45,11 @@ router.post('/login', loginValidator, async (req, res) => {
 
   const { email, password } = req.body;
   try {
-    const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
-    const user = rows[0];
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
     if (!user) return res.status(400).json({ error: 'Invalid email or password' });
 
-    // ❌ Block employers from using this route
+    // ❌ Employers blocked here
     if (user.role === 'employer') {
       return res.status(403).json({ error: 'Employers must use Employer Login' });
     }
@@ -77,11 +77,10 @@ router.post('/login/employer', loginValidator, async (req, res) => {
 
   const { email, password } = req.body;
   try {
-    const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
-    const user = rows[0];
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
     if (!user) return res.status(400).json({ error: 'Invalid email or password' });
 
-    // ✅ Only employers allowed here
     if (user.role !== 'employer') {
       return res.status(403).json({ error: 'Only employers can login here' });
     }
@@ -122,16 +121,17 @@ router.post('/register/employee', registerEmployee, async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
 
   try {
-    const [existing] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length) return res.status(400).json({ error: 'Email already exists' });
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length) return res.status(400).json({ error: 'Email already exists' });
 
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, phone, work_status)
-       VALUES (?, ?, ?, 'employee', ?, ?)`,
+       VALUES ($1, $2, $3, 'employee', $4, $5)
+       RETURNING id`,
       [name, email, hash, phone || null, work_status || null]
     );
 
-    const insertId = result.insertId;
+    const insertId = result.rows[0].id;
     const token = signToken({ id: insertId, role: 'employee', name, email });
     setAuthCookie(res, token);
     return res.status(201).json({
@@ -152,16 +152,17 @@ router.post('/register/employer', registerEmployer, async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
 
   try {
-    const [existing] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length) return res.status(400).json({ error: 'Email already exists' });
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length) return res.status(400).json({ error: 'Email already exists' });
 
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, company_name, website, gst_number)
-       VALUES (?, ?, ?, 'employer', ?, ?, ?)`,
+       VALUES ($1, $2, $3, 'employer', $4, $5, $6)
+       RETURNING id`,
       [name, email, hash, company_name || null, website || null, gst_number || null]
     );
 
-    const insertId = result.insertId;
+    const insertId = result.rows[0].id;
     const token = signToken({ id: insertId, role: 'employer', name, email });
     setAuthCookie(res, token);
     return res.status(201).json({
@@ -182,16 +183,17 @@ router.post('/register/recruiter', registerRecruiter, async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
 
   try {
-    const [existing] = await pool.execute('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length) return res.status(400).json({ error: 'Email already exists' });
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length) return res.status(400).json({ error: 'Email already exists' });
 
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, agency_name, specialization, years_experience)
-       VALUES (?, ?, ?, 'recruiter', ?, ?, ?)`,
+       VALUES ($1, $2, $3, 'recruiter', $4, $5, $6)
+       RETURNING id`,
       [name, email, hash, agency_name || null, specialization || null, years_experience || 0]
     );
 
-    const insertId = result.insertId;
+    const insertId = result.rows[0].id;
     const token = signToken({ id: insertId, role: 'recruiter', name, email });
     setAuthCookie(res, token);
     return res.status(201).json({
@@ -204,8 +206,11 @@ router.post('/register/recruiter', registerRecruiter, async (req, res) => {
   }
 });
 
+
+
+
 // ========================
-// GOOGLE LOGIN
+// GOOGLE LOGIN (Postgres)
 // ========================
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
@@ -218,21 +223,21 @@ router.get(
       const { id, displayName, emails } = req.user;
       const email = emails[0].value;
 
-      let [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
+      const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
       let user;
-      if (rows.length === 0) {
-        const [result] = await pool.execute(
-          "INSERT INTO users (name, email, role, provider_id) VALUES (?, ?, 'employee', ?)",
+      if (result.rows.length === 0) {
+        const insert = await pool.query(
+          "INSERT INTO users (name, email, role, provider_id) VALUES ($1, $2, 'employee', $3) RETURNING *",
           [displayName, email, id]
         );
-        user = { id: result.insertId, role: "employee", name: displayName, email };
+        user = insert.rows[0];
       } else {
-        user = rows[0];
+        user = result.rows[0];
       }
 
       const token = signToken(user);
       setAuthCookie(res, token);
-      res.redirect("http://localhost:8081/page2.html"); // front-end dashboard
+      res.redirect("http://localhost:8081/page2.html"); // ✅ frontend dashboard
     } catch (err) {
       console.error(err);
       res.redirect("http://localhost:8081/page2.html?error=google_login_failed");
@@ -241,7 +246,7 @@ router.get(
 );
 
 // ========================
-// MICROSOFT LOGIN
+// MICROSOFT LOGIN (Postgres)
 // ========================
 router.get(
   "/microsoft",
@@ -257,25 +262,27 @@ router.post(
       const email = req.user._json.preferred_username;
       const name = req.user.displayName || email;
 
-      let [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
+      const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
       let user;
-      if (rows.length === 0) {
-        const [result] = await pool.execute(
-          "INSERT INTO users (name, email, role, provider_id) VALUES (?, ?, 'employee', ?)",
+      if (result.rows.length === 0) {
+        const insert = await pool.query(
+          "INSERT INTO users (name, email, role, provider_id) VALUES ($1, $2, 'employee', $3) RETURNING *",
           [name, email, req.user.oid]
         );
-        user = { id: result.insertId, role: "employee", name, email };
+        user = insert.rows[0];
       } else {
-        user = rows[0];
+        user = result.rows[0];
       }
 
       const token = signToken(user);
       setAuthCookie(res, token);
-      res.redirect("http://localhost:8081/page2.html");
+      res.redirect("http://localhost:8081/page2.html"); // ✅ redirect to FE
     } catch (err) {
       console.error(err);
       res.redirect("http://localhost:8081/page2.html?error=microsoft_login_failed");
     }
   }
 );
+
 module.exports = router;
+

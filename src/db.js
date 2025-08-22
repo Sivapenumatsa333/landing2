@@ -1,50 +1,39 @@
 // src/db.js
-const mysql = require('mysql2/promise');
-const fs = require('fs');
-const path = require('path');
-require('dotenv').config();
+const { Pool } = require("pg");
+require("dotenv").config();
 
-const {
-  DB_HOST = 'localhost',
-  DB_PORT = 3306,
-  DB_USER,
-  DB_PASSWORD,
-  DB_NAME = 'career_portal'
-} = process.env;
-
-const pool = mysql.createPool({
-  host: DB_HOST,
-  port: DB_PORT,
-  user: DB_USER,
-  password: DB_PASSWORD,
-  database: DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  // allow executing multiple statements from schema
-  multipleStatements: true
+// ✅ PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL, // Render provides this
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
 
+// ✅ Initialize schema if not exists
 async function init() {
   try {
-    // If DB doesn't exist, try to run the schema which includes CREATE DATABASE
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      const schema = fs.readFileSync(schemaPath, 'utf8');
-      // Use a temporary connection to run the top-level CREATE DATABASE statement (if DB doesn't exist and user has permission)
-      const tmpConn = await mysql.createConnection({
-        host: DB_HOST,
-        port: DB_PORT,
-        user: DB_USER,
-        password: DB_PASSWORD,
-        multipleStatements: true
-      });
-      await tmpConn.query(schema);
-      await tmpConn.end();
-    }
-    console.log('MySQL schema executed or verified.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100),
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash TEXT,
+        role VARCHAR(50) NOT NULL DEFAULT 'employee',
+        phone VARCHAR(20),
+        work_status VARCHAR(50),
+        company_name VARCHAR(255),
+        website VARCHAR(255),
+        gst_number VARCHAR(100),
+        agency_name VARCHAR(255),
+        specialization VARCHAR(255),
+        years_experience INT,
+        provider_id VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    console.log("✅ PostgreSQL schema ready");
   } catch (err) {
-    console.error('Error executing schema (you may need to create DB/user manually):', err.message);
+    console.error("❌ DB init error", err);
   }
 }
 

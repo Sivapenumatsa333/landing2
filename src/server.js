@@ -7,8 +7,7 @@ require("dotenv").config();
 
 const { init } = require("./db");
 const authRoutes = require("./authRoutes");
-const { requireAuth } = require("./middleware.auth");
-require("./socialAuth"); // <-- Load Google & Microsoft strategies
+require("./socialAuth"); // load Google & Microsoft strategies
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -23,27 +22,26 @@ app.use(
     credentials: true,
   })
 );
-
-// Initialize passport
 app.use(passport.initialize());
 
-// Init DB (run schema if needed)
+// Init DB
 init().catch((err) => console.error("DB init error", err));
 
-// Health check route
+// Health check
 app.get("/", (req, res) =>
-  res.json({ status: "ok", message: "Career backend (MySQL + Social Logins) is running 🚀" })
+  res.json({ status: "ok", message: "Career backend (PostgreSQL) is running" })
 );
 
-// Auth routes
+// Routes
 app.use("/api/auth", authRoutes);
 
 // Example protected endpoint
+const { requireAuth } = require("./middleware.auth");
 app.get("/api/protected", requireAuth, (req, res) => {
-  res.json({ message: "✅ You are authenticated", user: req.user });
+  res.json({ message: "You are authenticated", user: req.user });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`✅ Server listening on http://localhost:${PORT}`);
+  console.log(`🚀 Server listening on http://localhost:${PORT}`);
 });
